@@ -44,15 +44,6 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model("User", userSchema);
 
-// Notification schema and model definition
-const notificationSchema = new mongoose.Schema({
-  message: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
-  isRead: { type: Boolean, default: false }, // Nueva propiedad
-  recipients: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-});
-
-const Notification = mongoose.model("Notification", notificationSchema);
 
 // Define validation schemas with Zod
 const registerSchema = z.object({
@@ -129,184 +120,6 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// Endpoint to create a notification for multiple users (Admin only)
-app.post("/notifications", authenticateToken, async (req, res) => {
-  if (!req.user.isAdmin)
-    return res.status(403).json({ message: "Admin privileges required" });
-  const { message, recipientIds } = req.body; // Cambiado para aceptar multiples destinatarios
-
-  const notification = new Notification({
-    message,
-    recipients: recipientIds, // Cambiado para asignar multiples destinatarios
-  });
-  await notification.save();
-
-  await User.updateMany(
-    { _id: { $in: recipientIds } }, // Actualizar todos los usuarios especificados
-    { $push: { notifications: notification._id } }
-  );
-
-  res.status(201).json({ message: "Notification sent sers" });
-}); // Actualización para múltiples destinatarios
-
-// Endpoint para filtrar notificaciones por fecha
-app.get("/notifications/filter", authenticateToken, async (req, res) => {
-  const { range } = req.query;
-
-  let startDate;
-  const endDate = new Date();
-
-  switch (range) {
-    case "today":
-      startDate = new Date();
-      startDate.setHours(0, 0, 0, 0);
-      break;
-    case "this_week":
-      startDate = new Date();
-      startDate.setDate(startDate.getDate() - startDate.getDay());
-      startDate.setHours(0, 0, 0, 0);
-      break;
-    case "last_month":
-      startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 1);
-      startDate.setDate(1);
-      startDate.setHours(0, 0, 0, 0);
-      break;
-    default:
-      return res.status(400).json({ message: "Invalid range parameter" });
-  }
-
-  try {
-    const notifications = await Notification.find({
-      recipients: req.user.userId,
-      createdAt: { $gte: startDate, $lte: endDate },
-    });
-
-    res.json({ length: notifications.length, notifications });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Error fetching notifications", error: err.message });
-  }
-});
-
-// Endpoint para filtrar notificaciones por fecha
-app.get("/notifications/filter", authenticateToken, async (req, res) => {
-  const { range } = req.query;
-
-  let startDate;
-  const endDate = new Date();
-
-  switch (range) {
-    case "today":
-      startDate = new Date();
-      startDate.setHours(0, 0, 0, 0);
-      break;
-    case "this_week":
-      startDate = new Date();
-      startDate.setDate(startDate.getDate() - startDate.getDay());
-      startDate.setHours(0, 0, 0, 0);
-      break;
-    case "last_month":
-      startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 1);
-      startDate.setDate(1);
-      startDate.setHours(0, 0, 0, 0);
-      break;
-    default:
-      return res.status(400).json({ message: "Invalid range parameter" });
-  }
-
-  try {
-    const notifications = await Notification.find({
-      recipients: req.user.userId,
-      createdAt: { $gte: startDate, $lte: endDate },
-    });
-
-    res.json({ length: notifications.length, notifications });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Error fetching notifications", error: err.message });
-  }
-});
-
-// Endpoint to view user's own notifications
-app.get("/my-notifications", authenticateToken, async (req, res) => {
-  const user = await User.findById(req.user.userId).populate("notifications");
-  res.status(200).json({
-    length: user.notifications.length,
-    notifications: user.notifications,
-  });
-});
-
-// Endpoint para marcar una o varias notificaciones como leídas
-app.put("/notifications/read", authenticateToken, async (req, res) => {
-  const { notificationIds } = req.body; // Array de IDs de notificaciones
-
-  if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
-    return res
-      .status(400)
-      .json({ message: "notificationIds must be a non-empty array" });
-  }
-
-  try {
-    const result = await Notification.updateMany(
-      { _id: { $in: notificationIds }, recipients: req.user.userId },
-      { isRead: true }
-    );
-
-    res.json({
-      message: "Notifications marked as read",
-      modifiedCount: result.modifiedCount, // Muestra el número de documentos actualizados
-    });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Error updating notifications", error: err.message });
-  }
-});
-
-// Endpoint para marcar todas las notificaciones como leídas
-app.put("/my-notifications/read-all", authenticateToken, async (req, res) => {
-  try {
-    await Notification.updateMany(
-      { recipients: req.user.userId, isRead: false },
-      { isRead: true }
-    );
-
-    res.json({ message: "All notifications marked as read" });
-  } catch (err) {
-    res.status(500).json({
-      message: "Error marking notifications as read",
-      error: err.message,
-    });
-  }
-});
-
-// Endpoint para eliminar una notificación
-app.delete("/notifications/:id", authenticateToken, async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const notification = await Notification.findById(id);
-    if (!notification)
-      return res.status(404).json({ message: "Notification not found" });
-
-    // Remover la notificación de los destinatarios
-    await User.updateMany(
-      { notifications: id },
-      { $pull: { notifications: id } }
-    );
-    await notification.deleteOne();
-
-    res.json({ message: "Notification deleted" });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Error deleting notification", error: err.message });
-  }
-});
 
 // Endpoint for admin to grant admin privileges to other users
 app.put("/grant-admin/:id", authenticateToken, async (req, res) => {
@@ -350,3 +163,151 @@ app.post("/logout", (_, res) => {
     .clearCookie("token")
     .json({ message: "Logout successful, token removed" });
 });
+
+
+//====================================================
+// Notificación Schema y modelo
+const notificationSchema = new mongoose.Schema({
+  message: { type: String, required: true },
+  userIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  isRead: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+});
+const Notification = mongoose.model("Notification", notificationSchema);
+
+//====================================================
+// 1. **POST /notifications**
+//    - **Función**: Crear una notificación para múltiples usuarios.
+//    - **Descripción**: Este endpoint permite crear una notificación que será enviada a uno o más usuarios especificados en el array `userIds`.
+
+app.post("/notifications", async (req, res) => {
+  const { message, userIds } = req.body;
+
+  if (!message || !Array.isArray(userIds) || userIds.length === 0) {
+    return res
+      .status(400)
+      .json({ message: "Mensaje y lista de usuarios son requeridos" });
+  }
+
+  try {
+    const newNotification = new Notification({ message, userIds });
+    await newNotification.save();
+
+    // Añadir la notificación a la lista de cada usuario
+    await User.updateMany(
+      { _id: { $in: userIds } },
+      { $push: { notifications: newNotification._id } }
+    );
+
+    res.status(201).json({ message: "Notificación creada", newNotification });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error al crear notificación", error: error.message });
+  }
+});
+
+
+
+//====================================================
+// 3. **GET /my-notifications**
+//    - **Función**: Ver todas las notificaciones propias.
+
+app.get("/my-notifications", async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) {
+    return res.status(400).json({ message: "ID de usuario requerido" });
+  }
+
+  try {
+    const notifications = await Notification.find({
+      userIds: userId,
+    });
+    res.json({ notifications });
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener notificaciones" });
+  }
+});
+
+//====================================================
+// 4. **PUT /notifications/read**
+//    - **Función**: Marcar una o varias notificaciones como leídas.
+
+app.put("/notifications/read", async (req, res) => {
+  const { notificationIds, userId } = req.body;
+
+  if (!Array.isArray(notificationIds) || notificationIds.length === 0 || !userId) {
+    return res
+      .status(400)
+      .json({ message: "IDs de notificación y ID de usuario requeridos" });
+  }
+
+  try {
+    await Notification.updateMany(
+      { _id: { $in: notificationIds }, userIds: userId },
+      { $set: { isRead: true } }
+    );
+    res.json({ message: "Notificaciones marcadas como leídas" });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error al marcar notificaciones", error: error.message });
+  }
+});
+
+//====================================================
+// 5. **PUT /my-notifications/read-all**
+//    - **Función**: Marcar todas las notificaciones del usuario como leídas.
+
+app.put("/my-notifications/read-all", async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) {
+    return res.status(400).json({ message: "ID de usuario requerido" });
+  }
+
+  try {
+    await Notification.updateMany(
+      { userIds: userId, isRead: false },
+      { $set: { isRead: true } }
+    );
+    res.json({ message: "Todas las notificaciones marcadas como leídas" });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error al marcar todas las notificaciones", error: error.message });
+  }
+});
+
+//====================================================
+// 6. **DELETE /notifications/:id**
+//    - **Función**: Eliminar una notificación específica.
+
+app.delete("/notifications/:id", async (req, res) => {
+  const { id } = req.params;
+  const { userId } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({ message: "ID de usuario requerido" });
+  }
+
+  try {
+    const notification = await Notification.findById(id);
+    if (!notification) {
+      return res.status(404).json({ message: "Notificación no encontrada" });
+    }
+
+    await notification.remove();
+    await User.updateMany(
+      { notifications: id },
+      { $pull: { notifications: id } }
+    );
+
+    res.json({ message: "Notificación eliminada" });
+  } catch (error) {
+    res.status(500).json({
+      message: "Error al eliminar notificación",
+      error: error.message,
+    });
+  }
+});
+//====================================================
